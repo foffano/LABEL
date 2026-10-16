@@ -1,0 +1,9 @@
+{
+  "token": "GERADO-PELO-SETUP",
+  "printer": "LABEL",
+  "label_width_mm": 100,
+  "label_height_mm": 150,
+  "sumatra_path": "C:\\pc-print-nuvem\\tools\\SumatraPDF.exe",
+  "print_settings": "noscale",
+  "printing_enabled": false
+}

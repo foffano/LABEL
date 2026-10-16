@@ -1,0 +1,18 @@
+<service>
+  <id>ToffaPrintBridge</id>
+  <name>Toffa Print Bridge</name>
+  <description>Ponte autenticada para impressão de etiquetas LABEL.</description>
+  <executable>%BASE%\..\.venv\Scripts\python.exe</executable>
+  <arguments>"%BASE%\..\bridge.py"</arguments>
+  <workingdirectory>%BASE%\..</workingdirectory>
+  <startmode>Automatic</startmode>
+  <delayedAutoStart/>
+  <depend>Spooler</depend>
+  <onfailure action="restart" delay="10 sec"/>
+  <stoptimeout>150 sec</stoptimeout>
+  <logpath>%BASE%\..\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>
