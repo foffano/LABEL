@@ -1,9 +1,12 @@
 """Ponte de impressão: uma instância, um consumidor, armazenamento SQLite."""
 import asyncio
+import base64
 import hashlib
+import hmac
 import io
 import json
 import logging
+import mimetypes
 import secrets
 import sqlite3
 import subprocess
@@ -12,12 +15,56 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 
 ROOT = Path(__file__).resolve().parent
+WEB = ROOT / 'web'
 MAX_BYTES = 20 * 1024 * 1024
+SESSION_COOKIE = 'toffa_session'
+SESSION_SECONDS = 7 * 86400
 log = logging.getLogger("bridge")
+# O registro do Windows pode mapear .js para text/plain; módulos ES exigem JavaScript.
+mimetypes.add_type('text/javascript', '.js')
+
+
+def hash_password(password, iterations=600_000):
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, iterations)
+    return f'pbkdf2_sha256${iterations}${salt.hex()}${digest.hex()}'
+
+
+def check_password(password, stored):
+    try:
+        scheme, iterations, salt, expected = stored.split('$')
+        if scheme != 'pbkdf2_sha256':
+            return False
+        digest = hashlib.pbkdf2_hmac('sha256', password.encode(), bytes.fromhex(salt), int(iterations))
+        return hmac.compare_digest(digest.hex(), expected)
+    except (AttributeError, ValueError):
+        return False
+
+
+class Sessions:
+    """Cookie assinado com HMAC; trocar session_secret invalida todas as sessões."""
+
+    def __init__(self, secret):
+        self.key = secret.encode()
+
+    def issue(self):
+        payload = base64.urlsafe_b64encode(json.dumps({'exp': int(time.time()) + SESSION_SECONDS}).encode()).decode()
+        return payload + '.' + hmac.new(self.key, payload.encode(), 'sha256').hexdigest()
+
+    def valid(self, value):
+        payload, _, signature = (value or '').partition('.')
+        if not hmac.compare_digest(hmac.new(self.key, payload.encode(), 'sha256').hexdigest(), signature):
+            return False
+        try:
+            return json.loads(base64.urlsafe_b64decode(payload))['exp'] > time.time()
+        except (ValueError, KeyError, TypeError):
+            return False
 
 
 class Store:
@@ -60,6 +107,11 @@ class Store:
             job_id = str(uuid.uuid4())
             db.execute("INSERT INTO jobs VALUES (?,?,?,?,?,?,?,?)", (job_id,key,digest,pdf,'awaiting_confirmation',now,now,None))
             return job_id
+
+    def recent(self, limit=20):
+        with self.connect() as db:
+            rows = db.execute("SELECT id,status,created,updated,detail FROM jobs ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
 
     def get(self, job_id):
         with self.connect() as db:
@@ -144,19 +196,83 @@ def create_app(config, data_dir=None, sender=dispatch):
         except asyncio.CancelledError:
             pass
 
+    sessions = Sessions(config.get('session_secret') or hmac.new(config['token'].encode(), b'site-session', 'sha256').hexdigest())
+    failures = {}
+
     async def authorize(request: Request):
         supplied = request.headers.get('authorization', '')
-        if not secrets.compare_digest(supplied.encode(), ('Bearer ' + config['token']).encode()):
-            raise HTTPException(401, 'Não autorizado')
+        if supplied and secrets.compare_digest(supplied.encode(), ('Bearer ' + config['token']).encode()):
+            return
+        if sessions.valid(request.cookies.get(SESSION_COOKIE)):
+            # Cabeçalho próprio força preflight CORS, que não é permitido: bloqueia CSRF.
+            if request.method in ('GET', 'HEAD') or request.headers.get('x-toffa') == '1':
+                return
+            raise HTTPException(403, 'Requisição sem cabeçalho do site')
+        raise HTTPException(401, 'Não autorizado')
 
-    app = FastAPI(title='Toffa Print Bridge', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None, dependencies=[Depends(authorize)])
+    app = FastAPI(title='Toffa Print Bridge', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = store
+    api = APIRouter(dependencies=[Depends(authorize)])
 
-    @app.get('/health')
+    @app.middleware('http')
+    async def headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['Referrer-Policy'] = 'no-referrer'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self'; script-src 'self'; worker-src 'self'; img-src 'self' data: blob:; "
+            "style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        response.headers.setdefault('Cache-Control', 'no-store')
+        return response
+
+    @app.get('/', include_in_schema=False)
+    def index():
+        return FileResponse(WEB / 'index.html', headers={'Cache-Control': 'no-cache'})
+
+    if WEB.is_dir():
+        app.mount('/static', StaticFiles(directory=WEB), name='static')
+
+    @app.post('/auth/login')
+    async def login(request: Request, response: Response):
+        stored = config.get('site_password_hash')
+        if not stored:
+            raise HTTPException(503, 'Senha do site não configurada; execute setup.py --senha no Windows')
+        client = request.headers.get('cf-connecting-ip') or (request.client.host if request.client else '?')
+        now = time.time()
+        recent = [t for t in failures.get(client, []) if t > now - 900]
+        if len(recent) >= 10:
+            raise HTTPException(429, 'Muitas tentativas; aguarde 15 minutos')
+        try:
+            password = str((await request.json()).get('password', ''))[:256]
+        except (ValueError, AttributeError):
+            raise HTTPException(400, 'Envie {"password": "..."}')
+        if not await asyncio.to_thread(check_password, password, stored):
+            if len(failures) > 1000:
+                failures.clear()
+            failures[client] = recent + [now]
+            raise HTTPException(401, 'Senha incorreta')
+        failures.pop(client, None)
+        local = request.url.hostname in ('127.0.0.1', 'localhost')
+        response.set_cookie(SESSION_COOKIE, sessions.issue(), max_age=SESSION_SECONDS, httponly=True,
+                            secure=not local, samesite='strict', path='/')
+        return {'ok': True}
+
+    @app.post('/auth/logout')
+    def logout(response: Response):
+        response.delete_cookie(SESSION_COOKIE, path='/')
+        return {'ok': True}
+
+    @api.get('/health')
     def health():
-        return {'status':'ok', 'printer':config['printer'], 'printing_enabled':config.get('printing_enabled',False), 'engine_available':Path(config['sumatra_path']).is_file()}
+        return {'status':'ok', 'printer':config['printer'], 'printing_enabled':config.get('printing_enabled',False), 'engine_available':Path(config['sumatra_path']).is_file(),
+                'label_width_mm':config.get('label_width_mm', 100), 'label_height_mm':config.get('label_height_mm', 150)}
 
-    @app.post('/v1/jobs', status_code=201)
+    @api.get('/v1/jobs')
+    def recent():
+        return store.recent()
+
+    @api.post('/v1/jobs', status_code=201)
     async def upload(request: Request):
         key = request.headers.get('idempotency-key', '')
         if not 1 <= len(key) <= 128:
@@ -179,21 +295,23 @@ def create_app(config, data_dir=None, sender=dispatch):
         job_id = store.create(key, bytes(body))
         return store.get(job_id)
 
-    @app.get('/v1/jobs/{job_id}')
+    @api.get('/v1/jobs/{job_id}')
     def status(job_id: str):
         return store.get(job_id)
 
-    @app.post('/v1/jobs/{job_id}/confirm')
+    @api.post('/v1/jobs/{job_id}/confirm')
     def confirm(job_id: str):
         if not config.get('printing_enabled') or not Path(config['sumatra_path']).is_file():
             raise HTTPException(503, 'Impressão ainda não habilitada/configurada')
         return store.confirm(job_id)
 
-    @app.delete('/v1/jobs/{job_id}')
+    @api.delete('/v1/jobs/{job_id}')
     def cancel(job_id: str):
         with store.connect() as db:
             db.execute("UPDATE jobs SET status='cancelled',pdf=NULL,updated=? WHERE id=? AND status IN ('awaiting_confirmation','queued')", (time.time(),job_id))
         return store.get(job_id)
+
+    app.include_router(api)
     return app
 
 

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Toffa Print</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15H6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 12h8M9 15.5h8M9 19h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Toffa Print</span>
+    </div>
+    <div class="topbar-right">
+      <span id="printer" class="pill" hidden></span>
+      <button id="logout" class="btn ghost small" hidden>Sair</button>
+    </div>
+  </header>
+
+  <main id="login-view" class="login" hidden>
+    <form id="login-form" class="card login-card">
+      <h1>Entrar</h1>
+      <p class="muted">Acesso à impressora de etiquetas.</p>
+      <label for="password">Senha</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="error" hidden></p>
+      <button class="btn primary" type="submit">Entrar</button>
+    </form>
+  </main>
+
+  <main id="app-view" class="layout" hidden>
+    <section class="column">
+      <div id="drop" class="card drop" tabindex="0" role="button" aria-label="Escolher PDF">
+        <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <strong id="drop-title">Arraste o PDF aqui</strong>
+        <span id="drop-sub" class="muted">ou clique para escolher</span>
+      </div>
+
+      <div id="settings" class="card" hidden>
+        <h2>Formato</h2>
+        <div id="summary" class="summary"></div>
+        <fieldset id="modes" class="modes"></fieldset>
+        <div id="table-setting" class="setting">
+          <div class="setting-head"><label for="table-height">Altura da tabela</label><output id="table-height-val"></output></div>
+          <input id="table-height" type="range" min="80" max="140" step="5" value="100">
+          <p class="hint">Espaço do rodapé para a tabela. Tabelas maiores encolhem para caber.</p>
+        </div>
+        <div id="margin-setting" class="setting">
+          <div class="setting-head"><label for="margin">Margem</label><output id="margin-val"></output></div>
+          <input id="margin" type="range" min="0" max="5" step="0.5" value="0">
+        </div>
+        <p id="warning" class="warning" hidden></p>
+      </div>
+
+      <div id="jobs-card" class="card">
+        <div class="card-head"><h2>Impressões recentes</h2><button id="jobs-refresh" class="btn ghost small">Atualizar</button></div>
+        <ul id="jobs" class="jobs"></ul>
+      </div>
+    </section>
+
+    <section class="column wide">
+      <div class="card preview-card">
+        <div class="card-head">
+          <h2>Prévia <span id="preview-meta" class="muted"></span></h2>
+          <div class="actions">
+            <button id="download" class="btn ghost" disabled>Baixar PDF</button>
+            <button id="print" class="btn primary" disabled>Imprimir</button>
+          </div>
+        </div>
+        <div id="progress" class="progress" hidden><div id="progress-bar"></div><span id="progress-text"></span></div>
+        <p id="status" class="status" hidden></p>
+        <div id="preview" class="preview"><p class="empty muted">Escolha um PDF para ver as etiquetas aqui.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <h2 id="confirm-title">Imprimir?</h2>
+      <p id="confirm-text"></p>
+      <div class="actions">
+        <button value="cancel" class="btn ghost">Cancelar</button>
+        <button value="ok" class="btn primary">Imprimir</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="zoom" class="zoom">
+    <form method="dialog"><button class="btn ghost small" aria-label="Fechar">Fechar</button></form>
+    <canvas id="zoom-canvas"></canvas>
+  </dialog>
+</body>
+</html>

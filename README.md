@@ -13,7 +13,8 @@ Ponte Windows para a impressora **LABEL (USB002)**. API local em
 - Teste físico direto no Windows aprovado pelo usuário, em 100 × 150 mm.
 - Impressão pela API habilitada, com tamanho real e uma cópia por página.
 - Teste completo pela Cloudflare aprovado pelo usuário: etiqueta impressa corretamente sob a conta do serviço Windows.
-- Site e otimização de PDFs são a próxima etapa. Nenhuma transformação é aplicada ainda.
+- Site em `https://print.toffa.com.br/`, servido pela própria ponte, com login por senha.
+  O PDF é montado no navegador (lógica da extensão PDF Casado Pro) e enviado já em 100 × 150 mm.
 
 ## Instalar e executar
 
@@ -83,13 +84,53 @@ Não configure cache para as rotas desta API.
 Rollback: restaure o backup do YAML, reinicie Cloudflared e remova somente o DNS
 `print.toffa.com.br` criado nesta etapa.
 
-## Contrato para integrar o site
+## Site
 
-Todas as chamadas exigem `Authorization: Bearer <token>`.
+A ponte serve o site em `/` (arquivos em `web/`). Fluxo: entrar com a senha,
+arrastar o PDF, escolher o formato, conferir a prévia e clicar em **Imprimir**.
+Todo o processamento do PDF acontece no navegador; o servidor só recebe o PDF final.
+
+Formatos (o site sugere sozinho quando encontra declarações de conteúdo):
+
+| Formato | O que faz |
+|---|---|
+| Etiqueta + tabela da declaração | Cada etiqueta é reduzida no topo e a tabela "Identificação dos bens" da página seguinte é recortada e colada no rodapé. Funciona com J&T/TikTok e Shopee. |
+| Somente etiquetas | Remove as páginas de declaração. |
+| Ajustar cada página | Encaixa (e gira, se estiver deitada) cada página em 100 × 150 mm. |
+| Enviar sem alteração | Envia o PDF original; avisa se há páginas fora de 100 × 150 mm. |
+
+Ajustes: altura da tabela (80–140 pt) e margem (0–5 mm), lembrados no navegador.
+Bibliotecas locais em `web/vendor/`: pdf.js 4.10.38 e pdf-lib 1.17.1 (sem CDN).
+
+Segurança: senha com PBKDF2 em `config.json` (`site_password_hash`); sessão em
+cookie HttpOnly, Secure, SameSite=Strict, assinado com `session_secret`, válida
+por 7 dias. Requisições do site que alteram dados exigem o cabeçalho `X-Toffa`
+(bloqueia CSRF). Após 10 senhas erradas em 15 min, o IP espera. O token da API
+continua funcionando para integrações e nunca vai para o navegador.
+
+### Atualizar o Windows
+
+No PowerShell administrativo, em `C:\pc-print-nuvem`:
+
+```powershell
+git pull
+.venv\Scripts\python setup.py --senha
+.\tools\ToffaPrintBridge.exe restart
+```
+
+Depois abra `https://print.toffa.com.br/`. Para trocar a senha, repita
+`setup.py --senha` e reinicie: todas as sessões abertas são encerradas.
+Recomendado: proteger também o hostname com Cloudflare Access (e-mail) e
+liberar a API por token de serviço.
+
+## Contrato da API
+
+Todas as chamadas exigem `Authorization: Bearer <token>` ou a sessão do site.
 
 | Método | Rota | Função |
 |---|---|---|
 | GET | `/health` | Saúde e configuração do motor |
+| GET | `/v1/jobs` | Últimos 20 pedidos |
 | POST | `/v1/jobs` | Corpo binário PDF, `Content-Type: application/pdf`, `Idempotency-Key` única |
 | GET | `/v1/jobs/{id}` | Consultar estado |
 | POST | `/v1/jobs/{id}/confirm` | Confirmar impressão |
@@ -113,9 +154,8 @@ reutilizar espaço liberado; isto não é uma promessa de apagamento seguro.
 
 Motor: `tools/SumatraPDF.exe`, configuração `noscale` para preservar medidas.
 Etiqueta confirmada: **100 mm de largura × 150 mm de altura**, orientação retrato.
-Os campos `label_width_mm` e `label_height_mm` registram o formato para a futura
-etapa de otimização; ainda não transformam nem validam as dimensões do PDF.
-O PDF final deverá ter páginas de 100 × 150 mm, impressas em tamanho real.
+Os campos `label_width_mm` e `label_height_mm` definem o tamanho das páginas
+que o site gera. A API não valida dimensões: integrações devem enviar 100 × 150 mm.
 Defina também o papel no driver LABEL como 100 × 150 mm. Depois de validar as
 dimensões e o acesso da conta do serviço, altere `printing_enabled` para `true`
 em `config.json` e reinicie a ponte. Faça um teste de uma etiqueta antes de lotes.
@@ -127,7 +167,8 @@ O motor pode falhar ou imprimir parcialmente; confira fisicamente antes de reenv
 .venv\Scripts\python -m pytest -q
 ```
 
-Os testes usam um motor simulado: não consomem etiquetas. Cobrem autenticação,
+Os testes usam um motor simulado: não consomem etiquetas. Cobrem autenticação, login do site,
+sessão, CSRF, limite de tentativas,
 PDF inválido, confirmação, cancelamento, impressão desabilitada, chaves
 concorrentes e recuperação de envio interrompido. O teste físico direto pelo
 Windows e a saúde externa do túnel passaram. O teste de impressão pela API chegou

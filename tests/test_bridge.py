@@ -71,3 +71,36 @@ def test_disabled_and_cancel(tmp_path):
         assert client.post(url+'/confirm').status_code == 503
         assert client.delete(url).json()['status'] == 'cancelled'
         assert client.get('/v1/jobs/missing').status_code == 404
+
+
+def test_site_login_session_and_csrf(tmp_path):
+    from bridge import hash_password
+    config = dict(token='x'*48, printer='LABEL', sumatra_path='missing', site_password_hash=hash_password('senha-correta', 1000))
+    with TestClient(create_app(config, tmp_path), base_url='http://localhost') as client:
+        assert client.get('/').status_code == 200
+        assert client.get('/static/app.js').headers['content-type'].startswith('text/javascript')
+        assert client.get('/health').status_code == 401
+        assert client.post('/auth/login', json={'password': 'errada'}).status_code == 401
+        assert client.post('/auth/login', json={'password': 'senha-correta'}).status_code == 200
+        assert client.get('/health').json()['label_width_mm'] == 100
+        assert client.get('/v1/jobs').json() == []
+        headers = {'Idempotency-Key': 'k', 'Content-Type': 'application/pdf'}
+        assert client.post('/v1/jobs', content=pdf(), headers=headers).status_code == 403
+        headers['X-Toffa'] = '1'
+        job = client.post('/v1/jobs', content=pdf(), headers=headers).json()
+        assert [j['id'] for j in client.get('/v1/jobs').json()] == [job['id']]
+        client.post('/auth/logout')
+        assert client.get('/health').status_code == 401
+        client.cookies.set('toffa_session', 'forjado.abc')
+        assert client.get('/health').status_code == 401
+
+
+def test_login_without_password_and_rate_limit(tmp_path):
+    from bridge import hash_password
+    config = dict(token='x'*48, printer='LABEL', sumatra_path='missing')
+    with TestClient(create_app(config, tmp_path)) as client:
+        assert client.post('/auth/login', json={'password': 'x'}).status_code == 503
+    config['site_password_hash'] = hash_password('certa-certa', 1000)
+    with TestClient(create_app(config, tmp_path)) as client:
+        codes = [client.post('/auth/login', json={'password': 'x'}).status_code for _ in range(11)]
+        assert codes[:10] == [401]*10 and codes[10] == 429
