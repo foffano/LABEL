@@ -11,7 +11,8 @@ Ponte Windows para a impressora **LABEL (USB002)**. API local em
 - Serviço instalado, rodando e publicado em `https://print.toffa.com.br` pelo túnel existente.
 - API externa validada: 401 sem token e 200 com token.
 - Teste físico direto no Windows aprovado pelo usuário, em 100 × 150 mm.
-- Impressão pela API ainda desabilitada; falta validar o envio sob a conta do serviço.
+- Impressão pela API habilitada, com tamanho real e uma cópia por página.
+- Teste completo pela Cloudflare aprovado pelo usuário: etiqueta impressa corretamente sob a conta do serviço Windows.
 - Site e otimização de PDFs são a próxima etapa. Nenhuma transformação é aplicada ainda.
 
 ## Instalar e executar
@@ -129,7 +130,8 @@ O motor pode falhar ou imprimir parcialmente; confira fisicamente antes de reenv
 Os testes usam um motor simulado: não consomem etiquetas. Cobrem autenticação,
 PDF inválido, confirmação, cancelamento, impressão desabilitada, chaves
 concorrentes e recuperação de envio interrompido. O teste físico direto pelo
-Windows e a saúde externa do túnel passaram. Falta testar a impressão pela API.
+Windows e a saúde externa do túnel passaram. O teste de impressão pela API chegou
+a `submitted` e o usuário confirmou a saída física correta da etiqueta.
 
 ## Referências
 

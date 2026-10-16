@@ -20,4 +20,10 @@ Não foram alterados DNS do Windows nem arquivo hosts.
 
 Teste físico posterior: uma etiqueta de 100 × 150 mm enviada diretamente pelo
 SumatraPDF à LABEL, com retorno zero, aprovada pelo usuário. A impressão pela
-API continua desabilitada; falta validar esse fluxo sob a conta do serviço.
+API foi posteriormente habilitada com `noscale,1x` e o serviço reiniciado.
+
+Teste completo via HTTPS/Cloudflare: pedido
+`1298834f-727d-4a63-8ee4-0d80b3bd4c8e`, recebido em
+`awaiting_confirmation`, confirmado para `queued`, finalizado em `submitted`.
+Foi enviada uma única etiqueta. O usuário confirmou a saída física correta deste
+segundo teste, executado sob a conta do serviço Windows. Fluxo completo aprovado.
